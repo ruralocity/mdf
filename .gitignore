@@ -1,0 +1,27 @@
+# Crush directory
+.crush/
+
+# Common build artifacts
+dist/
+build/
+target/
+node_modules/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
