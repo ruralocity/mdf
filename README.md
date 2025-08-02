@@ -1,4 +1,4 @@
-# Mastodon & Bluesky Follower Tracker
+# MDF: Track followers in Mastodon and Bsky
 
 A Ruby CLI tool with TUI interface to track your followers over time on both Mastodon and Bluesky. See who follows/unfollows you, manage non-mutual follows, and discover followback candidates.
 
