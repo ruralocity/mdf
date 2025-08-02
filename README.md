@@ -21,6 +21,13 @@ A simple Ruby CLI tool to track your Mastodon followers over time and see who fo
 
 ## Usage
 
+### Launch TUI Interface
+```bash
+ruby mastodon_tracker.rb tui
+```
+
+### Command Line Interface
+
 ### Check for changes
 ```bash
 ruby mastodon_tracker.rb check
@@ -40,6 +47,17 @@ ruby mastodon_tracker.rb stats
 ```bash
 ruby mastodon_tracker.rb non_mutual
 ruby mastodon_tracker.rb non_mutual --interactive  # Interactive unfollowing
+```
+
+### View account profile
+```bash
+ruby mastodon_tracker.rb profile @username@instance.com
+```
+
+### View followback candidates
+```bash
+ruby mastodon_tracker.rb followback
+ruby mastodon_tracker.rb followback --interactive  # Interactive following
 ```
 
 ## Automation

@@ -5,7 +5,10 @@
 # Install dependencies
 bundle install
 
-# Run the tracker
+# Launch TUI interface
+ruby mastodon_tracker.rb tui
+
+# Run the tracker (CLI)
 ruby mastodon_tracker.rb setup
 ruby mastodon_tracker.rb check
 
