@@ -727,8 +727,10 @@ class MastodonTUI
           sleep(1)
           break
         when 'o'
-          if @platform == 'mastodon' && account_details && account_details[:url]
-            system("open '#{account_details[:url]}'") # macOS
+          if @platform == 'mastodon' && account_details && account_details[:acct]
+            instance_url = config[:instance].gsub(/\/$/, '')
+            url = "#{instance_url}/@#{account_details[:acct]}"
+            system("open '#{url}'") # macOS
             puts "\n🌐 Opened in browser"
             sleep(1)
           elsif @platform == 'bluesky' && account_details
