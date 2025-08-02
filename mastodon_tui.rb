@@ -11,8 +11,9 @@ require 'tty-spinner'
 require 'pastel'
 
 class MastodonTUI
-  def initialize(tracker)
+  def initialize(tracker, platform = 'mastodon')
     @tracker = tracker
+    @platform = platform
     @cursor = TTY::Cursor
     @pastel = Pastel.new
     @prompt = TTY::Prompt.new
@@ -60,14 +61,22 @@ class MastodonTUI
     available_for_changes = total_height - header_height - stats_height - menu_height - 2 # padding
     
     # Header
+    platform_emoji = @platform == 'bluesky' ? '🦋' : '🐘'
+    platform_name = @platform.capitalize
+    
     header = TTY::Box.frame(
-      title: { top_left: " 🐘 Mastodon Follower Tracker " },
+      title: { top_left: " #{platform_emoji} #{platform_name} Follower Tracker " },
       width: TTY::Screen.width,
       height: header_height,
       border: :thick
     ) do
-      instance = config ? config[:instance].gsub('https://', '') : 'Not configured'
-      "Instance: #{instance}#{' ' * 20}Last Check: #{get_last_check_time}"
+      if @platform == 'mastodon'
+        instance = config ? config[:instance].gsub('https://', '') : 'Not configured'
+        "Instance: #{instance}#{' ' * 20}Last Check: #{get_last_check_time}"
+      else
+        handle = config ? config[:handle] : 'Not configured'
+        "Handle: #{handle}#{' ' * 20}Last Check: #{get_last_check_time}"
+      end
     end
     
     # Stats section
@@ -101,7 +110,12 @@ class MastodonTUI
         time = Time.parse(change['timestamp']).strftime('%m-%d %H:%M')
         emoji = change['action'] == 'follow' ? '🎉' : '💔'
         action = change['action'] == 'follow' ? 'followed' : 'unfollowed'
-        "   #{time}  #{emoji} #{change['display_name']} (@#{change['acct']}) #{action} you"
+        
+        if @platform == 'mastodon'
+          "   #{time}  #{emoji} #{change['display_name']} (@#{change['acct']}) #{action} you"
+        else
+          "   #{time}  #{emoji} #{change['display_name']} (@#{change['handle']}) #{action} you"
+        end
       end.join("\n")
     else
       "🔄 Recent Changes\n   No recent changes - run a check to see activity"
@@ -204,14 +218,21 @@ class MastodonTUI
     print @cursor.clear_screen
     print @cursor.move_to(0, 0)
     
-    db = SQLite3::Database.new(@tracker.db_path)
-    db.results_as_hash = true
+    # Get database connection based on platform
+    if @platform == 'mastodon'
+      db = SQLite3::Database.new(@tracker.db_path)
+      db.results_as_hash = true
+    end
     
     # Calculate how many changes we can show based on terminal height
     available_height = TTY::Screen.height - 6 # Leave room for header, footer, padding
     max_changes = [available_height - 2, 50].min # At least 2 lines for content, max 50 records
     
-    changes = db.execute("SELECT * FROM follower_changes ORDER BY timestamp DESC LIMIT ?", [max_changes])
+    if @platform == 'mastodon'
+      changes = db.execute("SELECT * FROM follower_changes ORDER BY timestamp DESC LIMIT ?", [max_changes])
+    else
+      changes = @tracker.get_recent_changes(max_changes)
+    end
     
     if changes.empty?
       content = "No history found. Run a check first!"
@@ -222,7 +243,12 @@ class MastodonTUI
           time = Time.parse(change['timestamp']).strftime('%m-%d %H:%M')
           emoji = change['action'] == 'follow' ? '🎉' : '💔'
           action = change['action'] == 'follow' ? 'Follow' : 'Unfollow'
-          [time, "#{emoji} #{action}", change['display_name'], "@#{change['acct']}"]
+          
+          if @platform == 'mastodon'
+            [time, "#{emoji} #{action}", change['display_name'], "@#{change['acct']}"]
+          else
+            [time, "#{emoji} #{action}", change['display_name'], "@#{change['handle']}"]
+          end
         end
       )
       content = table.render(:unicode, padding: [0, 1])
@@ -253,7 +279,7 @@ class MastodonTUI
       end
     end
     
-    db.close
+    db&.close if @platform == 'mastodon'
   end
 
   def show_non_mutual_view
@@ -267,13 +293,24 @@ class MastodonTUI
       config = @tracker.load_config
       return puts "Please run setup first!" unless config
       
-      followers = @tracker.fetch_followers(config[:instance], config[:token])
-      following = @tracker.fetch_following(config[:instance], config[:token])
+      if @platform == 'mastodon'
+        followers = @tracker.fetch_followers(config[:instance], config[:token])
+        following = @tracker.fetch_following(config[:instance], config[:token])
+      else
+        # Bluesky methods don't take parameters - they handle auth internally
+        followers = @tracker.fetch_followers
+        following = @tracker.fetch_following
+      end
       
       return puts "Failed to fetch data" unless followers && following
       
-      follower_ids = followers.map { |f| f[:id] }.to_set
-      non_mutual = following.reject { |f| follower_ids.include?(f[:id]) }
+      if @platform == 'mastodon'
+        follower_ids = followers.map { |f| f[:id] }.to_set
+        non_mutual = following.reject { |f| follower_ids.include?(f[:id]) }
+      else
+        follower_ids = followers.map { |f| f[:did] }.to_set
+        non_mutual = following.reject { |f| follower_ids.include?(f[:did]) }
+      end
       
       spinner.success("Found #{non_mutual.length} non-mutual follows")
       
@@ -401,13 +438,24 @@ class MastodonTUI
       config = @tracker.load_config
       return puts "Please run setup first!" unless config
       
-      followers = @tracker.fetch_followers(config[:instance], config[:token])
-      following = @tracker.fetch_following(config[:instance], config[:token])
+      if @platform == 'mastodon'
+        followers = @tracker.fetch_followers(config[:instance], config[:token])
+        following = @tracker.fetch_following(config[:instance], config[:token])
+      else
+        # Bluesky methods don't take parameters - they handle auth internally
+        followers = @tracker.fetch_followers
+        following = @tracker.fetch_following
+      end
       
       return puts "Failed to fetch data" unless followers && following
       
-      following_ids = following.map { |f| f[:id] }.to_set
-      followback_candidates = followers.reject { |f| following_ids.include?(f[:id]) }
+      if @platform == 'mastodon'
+        following_ids = following.map { |f| f[:id] }.to_set
+        followback_candidates = followers.reject { |f| following_ids.include?(f[:id]) }
+      else
+        following_ids = following.map { |f| f[:did] }.to_set
+        followback_candidates = followers.reject { |f| following_ids.include?(f[:did]) }
+      end
       
       spinner.success("Found #{followback_candidates.length} accounts you could follow back")
       
@@ -533,8 +581,15 @@ class MastodonTUI
     
     begin
       # Fetch detailed account info
-      account_details = @tracker.fetch_account_details(config[:instance], config[:token], account[:id])
-      recent_posts = @tracker.fetch_account_posts(config[:instance], config[:token], account[:id], 3)
+      if @platform == 'mastodon'
+        account_details = @tracker.fetch_account_details(config[:instance], config[:token], account[:id])
+        recent_posts = @tracker.fetch_account_posts(config[:instance], config[:token], account[:id], 3)
+      else
+        # Bluesky uses DID instead of ID and different method signature
+        account_id = account[:did] || account[:id]
+        account_details = @tracker.fetch_account_details(account_id)
+        recent_posts = @tracker.fetch_account_posts(account_id, 3)
+      end
       
       spinner.success("Account details loaded")
       
@@ -543,9 +598,15 @@ class MastodonTUI
       
       if account_details
         # Account header
-        header_content = "#{account_details[:display_name]} (@#{account_details[:acct]})\n" +
-                        "#{account_details[:url]}\n" +
-                        "Joined: #{format_date(account_details[:created_at])}"
+        if @platform == 'mastodon'
+          header_content = "#{account_details[:display_name]} (@#{account_details[:acct]})\n" +
+                          "#{account_details[:url]}\n" +
+                          "Joined: #{format_date(account_details[:created_at])}"
+        else
+          header_content = "#{account_details[:display_name]} (@#{account_details[:handle]})\n" +
+                          "DID: #{account_details[:did][0..30]}...\n" +
+                          "Joined: #{format_date(account_details[:created_at])}"
+        end
         
         header_box = TTY::Box.frame(
           title: { top_left: " Account Info " },
@@ -555,9 +616,15 @@ class MastodonTUI
         ) { header_content }
         
         # Stats
-        stats_content = "Followers: #{format_number(account_details[:followers_count])} | " +
-                       "Following: #{format_number(account_details[:following_count])} | " +
-                       "Posts: #{format_number(account_details[:statuses_count])}"
+        if @platform == 'mastodon'
+          stats_content = "Followers: #{format_number(account_details[:followers_count])} | " +
+                         "Following: #{format_number(account_details[:following_count])} | " +
+                         "Posts: #{format_number(account_details[:statuses_count])}"
+        else
+          stats_content = "Followers: #{format_number(account_details[:followers_count])} | " +
+                         "Following: #{format_number(account_details[:following_count])} | " +
+                         "Posts: #{format_number(account_details[:posts_count])}"
+        end
         
         stats_box = TTY::Box.frame(
           width: TTY::Screen.width,
@@ -566,7 +633,11 @@ class MastodonTUI
         ) { stats_content }
         
         # Bio
-        bio_content = account_details[:note] ? strip_html(account_details[:note]) : "No bio available"
+        if @platform == 'mastodon'
+          bio_content = account_details[:note] ? strip_html(account_details[:note]) : "No bio available"
+        else
+          bio_content = account_details[:description] || "No bio available"
+        end
         bio_box = TTY::Box.frame(
           title: { top_left: " Bio " },
           width: TTY::Screen.width,
@@ -581,7 +652,12 @@ class MastodonTUI
           
           "Recent Posts (showing #{posts_to_show}/#{recent_posts.length}):\n\n" + 
           recent_posts.first(posts_to_show).map.with_index do |post, idx|
-            content = strip_html(post[:content])
+            if @platform == 'mastodon'
+              content = strip_html(post[:content])
+            else
+              content = post[:text]
+            end
+            
             # Adjust content length based on terminal width
             max_content_length = [TTY::Screen.width - 10, 150].min
             content = content[0..max_content_length] + "..." if content.length > max_content_length
@@ -617,24 +693,47 @@ class MastodonTUI
         
         case key&.downcase
         when 'f'
-          if @tracker.follow_account(config[:instance], config[:token], account[:id])
-            puts "\n✅ Followed #{account[:display_name]}"
+          if @platform == 'mastodon'
+            if @tracker.follow_account(config[:instance], config[:token], account[:id])
+              puts "\n✅ Followed #{account[:display_name]}"
+            else
+              puts "\n❌ Failed to follow #{account[:display_name]}"
+            end
           else
-            puts "\n❌ Failed to follow #{account[:display_name]}"
+            account_id = account[:did] || account[:id]
+            if @tracker.follow_account(account_id)
+              puts "\n✅ Followed #{account[:display_name]}"
+            else
+              puts "\n❌ Failed to follow #{account[:display_name]}"
+            end
           end
           sleep(1)
           break
         when 'u'
-          if @tracker.unfollow_account(config[:instance], config[:token], account[:id])
-            puts "\n✅ Unfollowed #{account[:display_name]}"
+          if @platform == 'mastodon'
+            if @tracker.unfollow_account(config[:instance], config[:token], account[:id])
+              puts "\n✅ Unfollowed #{account[:display_name]}"
+            else
+              puts "\n❌ Failed to unfollow #{account[:display_name]}"
+            end
           else
-            puts "\n❌ Failed to unfollow #{account[:display_name]}"
+            account_id = account[:did] || account[:id]
+            if @tracker.unfollow_account(account_id)
+              puts "\n✅ Unfollowed #{account[:display_name]}"
+            else
+              puts "\n❌ Failed to unfollow #{account[:display_name]}"
+            end
           end
           sleep(1)
           break
         when 'o'
-          if account_details && account_details[:url]
+          if @platform == 'mastodon' && account_details && account_details[:url]
             system("open '#{account_details[:url]}'") # macOS
+            puts "\n🌐 Opened in browser"
+            sleep(1)
+          elsif @platform == 'bluesky' && account_details
+            url = "https://bsky.app/profile/#{account_details[:handle]}"
+            system("open '#{url}'") # macOS
             puts "\n🌐 Opened in browser"
             sleep(1)
           end
@@ -663,7 +762,11 @@ class MastodonTUI
     
     puts "About to follow #{selected_accounts.length} accounts:"
     selected_accounts.each do |account|
-      puts "  • #{account[:display_name]} (@#{account[:acct]})"
+      if @platform == 'mastodon'
+        puts "  • #{account[:display_name]} (@#{account[:acct]})"
+      else
+        puts "  • #{account[:display_name]} (@#{account[:handle]})"
+      end
     end
     
     puts "\nAre you sure you want to follow these accounts? [y/N]"
@@ -681,8 +784,16 @@ class MastodonTUI
       
       followed = 0
       selected_accounts.each do |account|
-        if @tracker.follow_account(config[:instance], config[:token], account[:id])
-          followed += 1
+        if @platform == 'mastodon'
+          account_id = account[:id]
+          if @tracker.follow_account(config[:instance], config[:token], account_id)
+            followed += 1
+          end
+        else
+          account_id = account[:did] || account[:id]
+          if @tracker.follow_account(account_id)
+            followed += 1
+          end
         end
         sleep(1) # Rate limiting
       end
@@ -709,7 +820,11 @@ class MastodonTUI
     
     puts "About to unfollow #{selected_accounts.length} accounts:"
     selected_accounts.each do |account|
-      puts "  • #{account[:display_name]} (@#{account[:acct]})"
+      if @platform == 'mastodon'
+        puts "  • #{account[:display_name]} (@#{account[:acct]})"
+      else
+        puts "  • #{account[:display_name]} (@#{account[:handle]})"
+      end
     end
     
     puts "\nAre you sure you want to unfollow these accounts? [y/N]"
@@ -727,8 +842,16 @@ class MastodonTUI
       
       unfollowed = 0
       selected_accounts.each do |account|
-        if @tracker.unfollow_account(config[:instance], config[:token], account[:id])
-          unfollowed += 1
+        if @platform == 'mastodon'
+          account_id = account[:id]
+          if @tracker.unfollow_account(config[:instance], config[:token], account_id)
+            unfollowed += 1
+          end
+        else
+          account_id = account[:did] || account[:id]
+          if @tracker.unfollow_account(account_id)
+            unfollowed += 1
+          end
         end
         sleep(1) # Rate limiting
       end
@@ -797,31 +920,45 @@ class MastodonTUI
     return nil unless config
     
     begin
-      db = SQLite3::Database.new(@tracker.db_path)
-      followers_count = db.execute("SELECT COUNT(*) FROM current_followers")[0][0]
-      
-      # This would require fetching following count - simplified for now
-      {
-        followers: followers_count,
-        following: nil,
-        non_mutual: nil
-      }
+      if @platform == 'mastodon'
+        db = SQLite3::Database.new(@tracker.db_path)
+        followers_count = db.execute("SELECT COUNT(*) FROM current_followers")[0][0]
+        
+        # This would require fetching following count - simplified for now
+        {
+          followers: followers_count,
+          following: nil,
+          non_mutual: nil
+        }
+      else
+        # Bluesky stats
+        stats = @tracker.stats
+        {
+          followers: stats[:followers],
+          following: nil,
+          non_mutual: nil
+        }
+      end
     rescue
       nil
     ensure
-      db&.close
+      db&.close if @platform == 'mastodon'
     end
   end
 
   def get_recent_changes(limit = 5)
     begin
-      db = SQLite3::Database.new(@tracker.db_path)
-      db.results_as_hash = true
-      db.execute("SELECT * FROM follower_changes ORDER BY timestamp DESC LIMIT ?", [limit])
+      if @platform == 'mastodon'
+        db = SQLite3::Database.new(@tracker.db_path)
+        db.results_as_hash = true
+        db.execute("SELECT * FROM follower_changes ORDER BY timestamp DESC LIMIT ?", [limit])
+      else
+        @tracker.get_recent_changes(limit)
+      end
     rescue
       []
     ensure
-      db&.close
+      db&.close if @platform == 'mastodon' && db
     end
   end
 

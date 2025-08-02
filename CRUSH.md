@@ -3,14 +3,20 @@
 ## Build/Test Commands
 ```bash
 # Install dependencies
+just install
 bundle install
 
-# Launch TUI interface
-ruby mastodon_tracker.rb tui
+# Launch TUI interfaces
+just mastodon    # Mastodon TUI
+just bluesky     # Bluesky TUI
 
-# Run the tracker (CLI)
-ruby mastodon_tracker.rb setup
-ruby mastodon_tracker.rb check
+# Setup accounts
+just setup-mastodon
+just setup-bluesky
+
+# Quick checks
+just check-mastodon
+just check-bluesky
 
 # Test
 bundle exec rspec
@@ -18,6 +24,7 @@ bundle exec rspec
 # Lint/Format
 bundle exec rubocop
 bundle exec rubocop -a  # auto-fix
+just lint               # via justfile
 ```
 
 ## Code Style Guidelines

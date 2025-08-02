@@ -7,21 +7,75 @@ require 'set'
 
 class MastodonTracker < Thor
   desc "tui", "Launch the TUI interface"
+  option :platform, type: :string, default: 'mastodon', aliases: '-p', desc: 'Platform to use (mastodon or bluesky)'
   def tui
     require_relative 'mastodon_tui'
     
-    config = load_config
-    unless config
-      puts "Please run setup first!"
-      return
-    end
+    platform = options[:platform].downcase
     
-    tui = MastodonTUI.new(self)
-    tui.start
+    case platform
+    when 'mastodon'
+      config = load_config
+      unless config
+        puts "Please run setup first!"
+        return
+      end
+      
+      tui = MastodonTUI.new(self, 'mastodon')
+      tui.start
+    when 'bluesky'
+      require_relative 'bluesky_tracker'
+      tracker = BlueskyTracker.new
+      config = tracker.load_config
+      unless config
+        puts "Please run Bluesky setup first: ruby mastodon_tracker.rb setup --platform=bluesky"
+        return
+      end
+      
+      tui = MastodonTUI.new(tracker, 'bluesky')
+      tui.start
+    else
+      puts "Unknown platform: #{platform}. Use 'mastodon' or 'bluesky'"
+    end
   end
 
   desc "setup", "Setup your Mastodon instance and access token"
+  option :platform, type: :string, default: 'mastodon', aliases: '-p', desc: 'Platform to setup (mastodon or bluesky)'
   def setup
+    platform = options[:platform].downcase
+    
+    case platform
+    when 'mastodon'
+      setup_mastodon
+    when 'bluesky'
+      require_relative 'bluesky_tracker'
+      tracker = BlueskyTracker.new
+      tracker.setup
+    else
+      puts "Unknown platform: #{platform}. Use 'mastodon' or 'bluesky'"
+    end
+  end
+
+  desc "check", "Check for new followers/unfollowers"
+  option :platform, type: :string, default: 'mastodon', aliases: '-p', desc: 'Platform to check (mastodon or bluesky)'
+  def check
+    platform = options[:platform].downcase
+    
+    case platform
+    when 'mastodon'
+      check_mastodon
+    when 'bluesky'
+      require_relative 'bluesky_tracker'
+      tracker = BlueskyTracker.new
+      tracker.check
+    else
+      puts "Unknown platform: #{platform}. Use 'mastodon' or 'bluesky'"
+    end
+  end
+
+  private
+
+  def setup_mastodon
     puts "Setting up Mastodon Follower Tracker..."
     
     print "Enter your Mastodon instance URL (e.g., mastodon.social): "
@@ -57,8 +111,7 @@ class MastodonTracker < Thor
     puts "Setup complete! Run 'ruby mastodon_tracker.rb tui' to launch the TUI interface."
   end
 
-  desc "check", "Check for new followers/unfollowers"
-  def check
+  def check_mastodon
     config = load_config
     return puts "Please run setup first!" unless config
     
@@ -336,31 +389,33 @@ class MastodonTracker < Thor
     puts "Net change: +#{follows - unfollows}"
   end
 
+  public
+
   # Public methods for TUI access
-  no_commands do
-    def load_config
-      return nil unless File.exist?(config_path)
-      
-      config = JSON.parse(File.read(config_path), symbolize_names: true)
-      
-      # Validate config
-      if config[:instance].nil? || config[:instance].strip.empty? || 
-         config[:token].nil? || config[:token].strip.empty?
-        puts "Error: Invalid configuration. Please run setup again."
-        return nil
-      end
-      
-      config
-    rescue JSON::ParserError
-      puts "Error: Corrupted configuration file. Please run setup again."
-      nil
+  def load_config
+    return nil unless File.exist?(config_path)
+    
+    config = JSON.parse(File.read(config_path), symbolize_names: true)
+    
+    # Validate config
+    if config[:instance].nil? || config[:instance].strip.empty? || 
+       config[:token].nil? || config[:token].strip.empty?
+      puts "Error: Invalid configuration. Please run setup again."
+      return nil
     end
+    
+    config
+  rescue JSON::ParserError
+    puts "Error: Corrupted configuration file. Please run setup again."
+    nil
+  end
 
-    def db_path
-      File.expand_path('~/.mastodon_tracker.db')
-    end
+  def db_path
+    File.expand_path('~/.mastodon_tracker.db')
+  end
 
-    def fetch_followers(instance, token)
+  # Public methods for TUI access that need to be available to external calls
+  def fetch_followers(instance, token)
       url = "#{instance}/api/v1/accounts/verify_credentials"
       
       response = HTTParty.get(url, headers: {
@@ -529,7 +584,6 @@ class MastodonTracker < Thor
       
       response.success?
     end
-  end
 
   private
 
